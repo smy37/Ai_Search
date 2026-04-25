@@ -8,6 +8,20 @@ def read_raw_json(json_path):
         data = json.load(f)
     return data
 
+def parse_parts(parts):
+    result = []
+    for p in parts:
+        if isinstance(p, str):
+            result.append(p)
+        elif isinstance(p, dict):
+            if p.get("type", "") == "code":
+                code = p.get("text", "")
+                result.append(f"```{p.get("language", "unknown_language")}\n{code}\n```")
+            elif p.get("type", "") == "image":
+                result.append(f"[image: {p.get("image_url", "")}]")
+
+    return "\n".join(result)
+
 def parsing_json(json_conv):
     try:
         title = json_conv["title"]
@@ -16,17 +30,18 @@ def parsing_json(json_conv):
         import sys
         sys.exit()
 
-
     chat_tree = json_conv["mapping"]
     text_list = []
 
-    current_node = {}
-    for id in chat_tree:
-        current_node = chat_tree[id]
-        break
-    while current_node.get("parent"):
-        current_node = chat_tree[current_node.get("parent")]
-    root = current_node
+    root = None
+    for node in chat_tree.values():
+        if node.get("parent") is None:
+            root = node
+            break
+
+    if root is None:
+        return {"title": title, "content": ""}
+
     id_stack = [root["id"]]
 
     def dfs(id_s):
@@ -45,16 +60,18 @@ def parsing_json(json_conv):
     for conv_id in id_list:
         cur_conv = chat_tree[conv_id]
         message = cur_conv.get("message")
-        if message:
-            if message.get("author", {}).get("role", ""):
-                role = message.get("author", {}).get("role", "")
-                content_list = message.get("content", {}).get("parts", [])
-                parts = [p for p in content_list if isinstance(p, str)]
-                content = "\n".join(parts).strip()
-                if role == "user" and len(text_list)%2 == 0:
-                    text_list.append({"role": "user", "text": content})
-                elif role == "assistant" and len(text_list)%2 == 1:
-                    text_list.append({"role": "assistant", "text": content})
+        if not message:
+            continue
+        role = message.get("author", {}).get("role", "")
+        part_list = message.get("content", {}).get("parts", [])
+        content = parse_parts(part_list)
+
+        if role == "user":
+            text_list.append({"role": "user", "text": content})
+        elif role == "assistant":
+            text_list.append({"role": "assistant", "text": content})
+        elif role == "tool":
+            text_list.append({"role": "tool", "text": content})
 
     parsing_data = {
         "title": title,
@@ -64,9 +81,9 @@ def parsing_json(json_conv):
 
 def convert_to_md(dict_data: dict):
     md_text = ""
-    md_text += f"# 대화 제목: {dict_data["title"]}\n\n\n"
+    md_text += f"# 대화 제목: {dict_data['title']}\n\n\n"
     for chat in dict_data["content"]:
-        md_text += f"## {chat["role"]}:\n{chat["text"]}\n\n"
+        md_text += f"## {chat['role']}:\n{chat['text']}\n\n"
     return md_text
 
 
@@ -76,7 +93,6 @@ def ts_to_filename(ts: float) -> str:
 
 def find_json_file(json_dir_path, output_path):
     file_list = os.listdir(json_dir_path)
-    cnt = 0
     for file in file_list:
         extension = os.path.splitext(file)[-1]
         if extension == ".json":
@@ -93,7 +109,7 @@ def find_json_file(json_dir_path, output_path):
                     time_title = ts_to_filename(create_time)
                     with open(os.path.join(output_path, f"{time_title}.md"), "w", encoding="utf-8") as wr:
                         wr.write(md_data)
-                    cnt += 1
+
 
 
 if __name__ == "__main__":
